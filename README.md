@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL--Kali-blueviolet)]()
 
-## 📹 演示视频
+## 📹 演示
 
 ![MoZiSec Demo](./MoZi.gif)
 
