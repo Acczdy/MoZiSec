@@ -6,9 +6,20 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL--Kali-blueviolet)]()
 
-## 演示视频
+## 📹 演示视频
 
-<video src="./MoZi.mp4" controls="controls" style="max-width: 100%;"></video>
+> **视频文件**: [MoZi.mp4](./MoZi.mp4) (137 MB)
+>
+> ⚠️ **注意**: GitHub 不支持直接播放视频文件。请下载后在本地观看。
+>
+> **下载方式**:
+> ```bash
+> # 使用 Git LFS 下载
+> git lfs pull
+>
+> # 或直接下载
+> wget https://github.com/Acczdy/MoZiSec/releases/download/v1.0/MoZi.mp4
+> ```
 
 > 墨家以 **兼爱、非攻** 为核心，构建了包含十大主张的严密思想体系，宗旨是 **兴天下之利，除天下之害**。
 >
