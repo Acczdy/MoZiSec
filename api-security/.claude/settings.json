@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "autoApprove": {
+      "enabled": true,
+      "exclude": [
+        "Bash(rm*)",
+        "Bash(*-rf*)"
+      ]
+    }
+  },
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",
+    "ANTHROPIC_BASE_URL": "${ANTHROPIC_BASE_URL}",
+    "ANTHROPIC_MODEL": "qwen3.6-plus"
+  }
+}

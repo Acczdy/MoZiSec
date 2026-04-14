@@ -1,0 +1,854 @@
+#!/bin/bash
+
+# MoZiSec - 墨子安全导航 - 自动发现版
+# 「墨子 MoZi · 非攻兼爱」
+# 版本：v1.0
+# 作者：Acczdy
+
+VERSION="v1.0"
+
+# ========== 跨平台路径配置 ==========
+# 自动检测操作系统并设置路径
+if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "win32" ]]; then
+    IS_WINDOWS=true
+    if [ -n "$MOZI_WORKSPACE_ROOT" ]; then
+        SCRIPT_DIR="$MOZI_WORKSPACE_ROOT"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+    MOZI_CONFIG_FILE="$USERPROFILE/.mozi_workspaces.json"
+    MOZI_HISTORY_FILE="$USERPROFILE/.mozi_history.json"
+else
+    IS_WINDOWS=false
+    if [ -n "$MOZI_WORKSPACE_ROOT" ]; then
+        SCRIPT_DIR="$MOZI_WORKSPACE_ROOT"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+    MOZI_CONFIG_FILE="$HOME/.mozi_workspaces.json"
+    MOZI_HISTORY_FILE="$HOME/.mozi_history.json"
+fi
+
+# 颜色定义
+RED='\033[91m'
+GREEN='\033[92m'
+YELLOW='\033[93m'
+CYAN='\033[36m'
+GRAY='\033[90m'
+WHITE='\033[97m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# ========== 墨子名言 - 支持自动发现 ==========
+declare -A MOZI_QUOTES=(
+    ["js-security"]="墨子守城，善察敌情"
+    ["penetration-testing"]="知己知彼，百战不殆"
+    ["api-security"]="兼爱非攻，守以为先"
+    ["web-security"]="城郭不备，不可守也"
+    ["recon"]="知者不惑，先知先觉"
+    ["iam"]="信者为王，验者为盾"
+    ["reports"]="笔耕不辍，记录为证"
+)
+
+# 默认分组映射
+declare -A DEFAULT_GROUPS=(
+    ["js-security"]="核心安全"
+    ["penetration-testing"]="核心安全"
+    ["api-security"]="核心安全"
+    ["web-security"]="核心安全"
+    ["recon"]="核心安全"
+    ["iam"]="取证分析"
+    ["reports"]="文档管理"
+)
+
+# 常用工作区
+declare -a COMMON_WORKSPACES=(
+    "0|js-security|jsc|JS 安全分析"
+    "1|penetration-testing|p|渗透测试"
+    "2|api-security|a|API 安全"
+    "3|web-security|w|Web 安全"
+    "4|recon|rec|信息收集"
+)
+
+# 分组列表（基础分组 + 自动发现的自定义分组）
+declare -a MOZI_GROUPS_BASE=("核心安全" "威胁防御" "安全运营" "专项领域" "取证分析" "网络攻击面" "文档管理")
+declare -a MOZI_GROUPS=()
+
+# ========== 工作区数据缓存 ==========
+declare -a DISCOVERED_WORKSPACES=()
+declare -A WORKSPACE_NAMES=()
+declare -A WORKSPACE_ALIASES=()
+declare -A WORKSPACE_GROUPS=()
+
+# ========== 核心功能：自动发现工作区 ==========
+discover_workspaces() {
+    DISCOVERED_WORKSPACES=()
+    WORKSPACE_NAMES=()
+    WORKSPACE_ALIASES=()
+    WORKSPACE_GROUPS=()
+
+    for dir in "$SCRIPT_DIR"/*/; do
+        [ ! -d "$dir" ] && continue
+        local dirname=$(basename "$dir")
+
+        # 跳过系统目录
+        case "$dirname" in
+            "."|""|"tmp"|".claude"|"memory"|".git"|"node_modules") continue ;;
+        esac
+
+        # 检查工作区标识：CLAUDE.md 存在
+        if [ -f "$dir/CLAUDE.md" ]; then
+            DISCOVERED_WORKSPACES+=("$dirname")
+
+            # 从 CLAUDE.md 提取名称
+            local name=$(grep -m1 "^# " "$dir/CLAUDE.md" 2>/dev/null | sed 's/^# //' | head -c 50)
+            WORKSPACE_NAMES["$dirname"]="${name:-$dirname}"
+
+            # 优先从 CLAUDE.md 读取分组配置（支持 HTML 注释格式）
+            local group_from_md=$(grep -m1 "<!-- *group:" "$dir/CLAUDE.md" 2>/dev/null | sed 's/.*<!-- *group: *\([^>]*\) *-->/\1/' | tr -d ' ')
+            if [ -n "$group_from_md" ]; then
+                WORKSPACE_GROUPS["$dirname"]="$group_from_md"
+            else
+                # 使用默认分组
+                WORKSPACE_GROUPS["$dirname"]="${DEFAULT_GROUPS[$dirname]:-专项领域}"
+            fi
+
+            # 从 CLAUDE.md 读取别名配置
+            local alias_from_md=$(grep -m1 "<!-- *alias:" "$dir/CLAUDE.md" 2>/dev/null | sed 's/.*<!-- *alias: *\([^>]*\) *-->/\1/' | tr -d ' ')
+            if [ -n "$alias_from_md" ]; then
+                WORKSPACE_ALIASES["$dirname"]="$alias_from_md"
+            else
+                # 设置默认别名
+                local alias=$(echo "$dirname" | tr '[:upper:]' '[:lower:]' | sed 's/-//g' | cut -c1-3)
+                WORKSPACE_ALIASES["$dirname"]="$alias"
+            fi
+
+            # 设置名言
+            if [ -z "${MOZI_QUOTES[$dirname]}" ]; then
+                MOZI_QUOTES["$dirname"]="守土有责，防患未然"
+            fi
+        fi
+    done
+
+    # 排序
+    IFS=$'\n' DISCOVERED_WORKSPACES=($(sort <<<"${DISCOVERED_WORKSPACES[*]}"))
+    unset IFS
+
+    # 构建分组列表（基础分组 + 自动发现的自定义分组）
+    MOZI_GROUPS=("${MOZI_GROUPS_BASE[@]}")
+    for dir in "${DISCOVERED_WORKSPACES[@]}"; do
+        local grp="${WORKSPACE_GROUPS[$dir]}"
+        local found=0
+        # 检查是否已存在
+        for g in "${MOZI_GROUPS[@]}"; do
+            [ "$g" == "$grp" ] && { found=1; break; }
+        done
+        # 添加新分组
+        [ $found -eq 0 ] && MOZI_GROUPS+=("$grp")
+    done
+}
+
+# ========== 获取工作区信息 ==========
+get_role_name() {
+    local dir="$1"
+    echo "${WORKSPACE_NAMES[$dir]:-$dir}"
+}
+
+get_role_alias() {
+    local dir="$1"
+    echo "${WORKSPACE_ALIASES[$dir]:-$dir}"
+}
+
+get_role_group() {
+    local dir="$1"
+    echo "${WORKSPACE_GROUPS[$dir]:-专项领域}"
+}
+
+get_role_quote() {
+    local dir="$1"
+    echo "${MOZI_QUOTES[$dir]:-守土有责}"
+}
+
+# ========== 统计技能数量 ==========
+count_skills() {
+    local dir="$1"
+    local skills_dir="$SCRIPT_DIR/$dir/.claude/skills"
+    if [ -d "$skills_dir" ]; then
+        find "$skills_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l
+    else
+        echo "0"
+    fi
+}
+
+list_skills() {
+    local dir="$1"
+    local skills_dir="$SCRIPT_DIR/$dir/.claude/skills"
+    if [ -d "$skills_dir" ]; then
+        find "$skills_dir" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | sort
+    fi
+}
+
+# ========== 检查 fzf ==========
+check_fzf() {
+    command -v fzf &> /dev/null
+}
+
+# ========== ASCII Banner ==========
+show_banner() {
+    if command -v tput &> /dev/null && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+        clear
+    else
+        echo ""
+    fi
+
+    echo ""
+    echo -e "${RED}${BOLD}"
+    echo "███╗   ███╗ ██████╗ ███████╗██╗███████╗███████╗ ██████╗ "
+    echo "████╗ ████║██╔═══██╗╚══███╔╝██║██╔════╝██╔════╝██╔════╝"
+    echo "██╔████╔██║██║   ██║  ███╔╝ ██║███████╗█████╗  ██║     "
+    echo "██║╚██╔╝██║██║   ██║ ███╔╝  ██║╚════██║██╔══╝  ██║     "
+    echo "██║ ╚═╝ ██║╚██████╔╝███████╗██║███████║███████╗╚██████╗"
+    echo "╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝╚══════╝╚══════╝ ╚═════╝"
+    echo ""
+    echo -e "${GRAY}  ──────────────────────────────────────────────────────────────────────────────────${RESET}"
+    echo -e "${WHITE}  墨子 MoZiSec · ${GREEN}${VERSION}${RESET}                            ${GRAY}自动发现版${RESET}"
+    echo -e "${GRAY}  非攻兼爱 · 防御性安全测试工具${RESET}"
+    echo ""
+}
+
+# ========== FZF 默认配置 ==========
+FZF_DEFAULT_OPTS="
+--border
+--layout=reverse
+--height=80%
+--prompt='🔹 '
+--pointer='▸'
+--marker='✓'
+--header='↑↓ 选择 | Enter 确认 | Esc 返回 | / 搜索'
+--header-first
+--color='border:gray,prompt:yellow,pointer:yellow,marker:yellow,info:gray'
+--preview-window='right:50%'
+--ansi
+"
+export FZF_DEFAULT_OPTS="$FZF_DEFAULT_OPTS"
+
+# ========== 主菜单 ==========
+show_main_menu_fzf() {
+    if ! check_fzf; then
+        show_banner
+        echo -e "${YELLOW}  未安装 fzf"
+        if [[ "$IS_WINDOWS" == true ]]; then
+            echo -e "${GRAY}  Windows: choco install fzf 或 winget install fzf${RESET}"
+        else
+            echo -e "${GRAY}  Linux: apt install fzf 或 brew install fzf${RESET}"
+        fi
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+        return 1
+    fi
+
+    while true; do
+        show_banner
+
+        echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${WHITE}${BOLD}  │                    主菜单选择                              │${RESET}"
+        echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+        echo ""
+
+        local workspace_count=${#DISCOVERED_WORKSPACES[@]}
+
+        local menu_items=(
+            "★ 常用工作区    快速访问高频工作区"
+            "全量工作区      浏览所有 $workspace_count 个工作区"
+            "分组导航        按分类浏览工作区"
+            "创建工作区      创建新的工作区目录"
+            "帮助            查看使用说明"
+            "配置            查看当前配置"
+            "退出            退出 MoZiSec"
+        )
+
+        local choice=$(printf '%s\n' "${menu_items[@]}" | \
+            fzf --height=15 \
+            --prompt="🔹 " \
+            --preview-window='wrap' \
+            --preview "
+                case {} in
+                    *常用*) echo -e '${WHITE}常用工作区列表:\n\n  0. JS 安全分析 (jsc)\n  1. 渗透测试 (p)\n  2. API 安全 (a)\n  3. Web 安全 (w)\n  4. 信息收集 (rec)' ;;
+                    *全量*) echo -e '${WHITE}已发现 '\$workspace_count' 个工作区\n\n  自动扫描含有 CLAUDE.md 的目录' ;;
+                    *分组*) echo -e '${WHITE}分组列表:\n\n  核心安全\n  威胁防御\n  安全运营\n  专项领域\n  取证分析\n  网络攻击面\n  文档管理' ;;
+                    *创建*) echo -e '${WHITE}创建工作区:\n\n  输入工作区名称\n  自动生成目录结构' ;;
+                    *帮助*) echo -e '${WHITE}使用说明:\n\n  方向键选择\n  Enter 确认\n  Esc 返回\n  / 搜索' ;;
+                    *配置*) echo -e '${WHITE}当前配置:\n\n  脚本目录：'\$SCRIPT_DIR'\n  工作区数量：'\$workspace_count ;;
+                    *退出*) echo -e '${RED}确认退出？' ;;
+                esac
+            " \
+            2>/dev/null)
+
+        case "$choice" in
+            ★*常用*) select_common_fzf ;;
+            *全量*) select_all_workspaces_fzf ;;
+            *分组*) select_category_fzf ;;
+            *创建*) create_workspace_interactive ;;
+            *帮助*) show_help ;;
+            *配置*) show_config ;;
+            *退出*) echo -e "${GRAY}  退出 MoZiSec · 兼爱非攻${RESET}"; exit 0 ;;
+            *) echo -e "${GRAY}  退出 MoZiSec${RESET}"; exit 0 ;;
+        esac
+    done
+}
+
+# ========== 常用工作区选择 ==========
+select_common_fzf() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  ★ 常用工作区                              │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+
+    local options=()
+    for item in "${COMMON_WORKSPACES[@]}"; do
+        IFS='|' read -r idx dir alias name <<< "$item"
+        if [ -d "$SCRIPT_DIR/$dir" ]; then
+            options+=("$idx: $name ($alias)")
+        fi
+    done
+
+    if [ ${#options[@]} -eq 0 ]; then
+        echo -e "${YELLOW}  暂无可用的常用工作区${RESET}"
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+        return
+    fi
+
+    local preview_script="/tmp/mozi_preview_common_$$"
+    cat > "$preview_script" << PREVIEW_EOF
+#!/bin/bash
+input="\$1"
+for ws in js-security penetration-testing api-security web-security recon; do
+    if [[ "\$input" == *"\$ws"* ]]; then
+        echo "工作区：\$ws"
+        skills_dir="$SCRIPT_DIR/\$ws/.claude/skills"
+        if [ -d "\$skills_dir" ]; then
+            skills_count=\$(find "\$skills_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+            echo "技能数量：\$skills_count 个"
+        fi
+        break
+    fi
+done
+PREVIEW_EOF
+    chmod +x "$preview_script"
+
+    local selected
+    selected=$(printf '%s\n' "${options[@]}" | \
+        fzf --height=12 \
+            --prompt="★ 常用 " \
+            --preview "$preview_script {}" \
+            2>/dev/null)
+
+    rm -f "$preview_script"
+
+    if [ -n "$selected" ]; then
+        local selected_idx=$(echo "$selected" | cut -d':' -f1 | tr -d ' ')
+        for item in "${COMMON_WORKSPACES[@]}"; do
+            IFS='|' read -r idx dir alias name <<< "$item"
+            if [ "$idx" == "$selected_idx" ] && [ -d "$SCRIPT_DIR/$dir" ]; then
+                enter_workspace "$dir"
+                return
+            fi
+        done
+    fi
+}
+
+# ========== 全量工作区选择 ==========
+select_all_workspaces_fzf() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  全量工作区                                │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+
+    if [ ${#DISCOVERED_WORKSPACES[@]} -eq 0 ]; then
+        echo -e "${YELLOW}  未发现任何工作区${RESET}"
+        echo -e "${GRAY}  使用「创建工作区」功能添加新工作区${RESET}"
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+        return
+    fi
+
+    local options=()
+    for dir in "${DISCOVERED_WORKSPACES[@]}"; do
+        local name=$(get_role_name "$dir")
+        local alias=$(get_role_alias "$dir")
+        local group=$(get_role_group "$dir")
+        options+=("$dir: $name ($alias) [$group]")
+    done
+
+    local tmpfile="/tmp/mozi_all_ws_$$"
+    printf '%s\n' "${options[@]}" > "$tmpfile"
+
+    local preview_script="/tmp/mozi_preview_all_$$"
+    cat > "$preview_script" << PREVIEW_EOF
+#!/bin/bash
+input="\$1"
+dir=\$(echo "\$input" | cut -d':' -f1 | tr -d ' ')
+skills_dir="$SCRIPT_DIR/\$dir/.claude/skills"
+if [ -d "\$skills_dir" ]; then
+    skills_count=\$(find "\$skills_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+    echo "工作区：\$dir"
+    echo "技能数量：\$skills_count 个"
+else
+    echo "工作区：\$dir"
+    echo "暂无技能"
+fi
+PREVIEW_EOF
+    chmod +x "$preview_script"
+
+    local selected
+    selected=$(cat "$tmpfile" | \
+        fzf --height=20 \
+            --prompt="工作区 " \
+            --preview "$preview_script {}" \
+            2>/dev/null)
+
+    rm -f "$tmpfile" "$preview_script"
+
+    if [ -n "$selected" ]; then
+        local target_dir=$(echo "$selected" | cut -d':' -f1 | tr -d ' ')
+        enter_workspace "$target_dir"
+    fi
+}
+
+# ========== 分组导航 ==========
+select_category_fzf() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  分组导航                                  │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+
+    local group
+    group=$(printf '%s\n' "${MOZI_GROUPS[@]}" | \
+        fzf --height=15 \
+            --prompt="分组 " \
+            --preview "
+                case {} in
+                    *核心*) echo '核心安全：JS 安全、渗透测试、API 安全、Web 安全、信息收集' ;;
+                    *威胁*) echo '威胁防御：威胁狩猎、威胁情报、应急响应' ;;
+                    *安全*) echo '安全运营：SOC、云安全、终端安全' ;;
+                    *专项*) echo '专项领域：容器、工控、红队、零信任等' ;;
+                    *取证*) echo '取证分析：数字取证、身份认证 (IAM)' ;;
+                    *网络*) echo '网络攻击面：无线安全、社会工程学' ;;
+                    *文档*) echo '文档管理：安全报告' ;;
+                esac
+            " \
+            2>/dev/null)
+
+    [ -n "$group" ] && show_group_fzf "$group"
+}
+
+show_group_fzf() {
+    local group="$1"
+    show_banner
+
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    printf "${WHITE}${BOLD}  │  【%-54s${RESET}${WHITE}${BOLD}】│${RESET}\n" "$group"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+
+    local tmpfile="/tmp/mozi_group_$$"
+    > "$tmpfile"
+
+    local idx=0
+    for dir in "${DISCOVERED_WORKSPACES[@]}"; do
+        local dir_group=$(get_role_group "$dir")
+        if [[ "$dir_group" == *"$group"* ]] || [[ "$group" == *"$dir_group"* ]]; then
+            local quote=$(get_role_quote "$dir")
+            local name=$(get_role_name "$dir")
+            local alias=$(get_role_alias "$dir")
+            echo "${idx}|${dir}|${quote}|${name}|${alias}" >> "$tmpfile"
+            ((idx++))
+        fi
+    done
+
+    if [ ! -s "$tmpfile" ]; then
+        echo -e "${YELLOW}  该分组下暂无工作区${RESET}"
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+        rm -f "$tmpfile"
+        return
+    fi
+
+    local preview_script="/tmp/mozi_preview_grp_$$"
+    cat > "$preview_script" << PREVIEW_EOF
+#!/bin/bash
+sel_idx=\$(echo "\$1" | cut -d":" -f1 | tr -d " ")
+grep "^\${sel_idx}|" "$tmpfile" 2>/dev/null | head -1 | while IFS="|" read -r idx dir quote name alias; do
+    echo "名言：\$quote"
+    skills_dir="$SCRIPT_DIR/\$dir/.claude/skills"
+    if [ -d "\$skills_dir" ]; then
+        cnt=\$(find "\$skills_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+        echo "技能：\$cnt 个"
+    fi
+done
+PREVIEW_EOF
+    chmod +x "$preview_script"
+
+    local selected
+    selected=$(while IFS='|' read -r idx dir quote name alias; do
+        echo "${idx}: ${name} (${alias})"
+    done < "$tmpfile" | \
+        fzf --height=20 \
+            --prompt="【$group】" \
+            --preview "$preview_script {}" \
+            2>/dev/null)
+
+    rm -f "$tmpfile" "$preview_script"
+
+    if [ -n "$selected" ]; then
+        local selected_idx=$(echo "$selected" | cut -d':' -f1 | tr -d " ")
+        local target_dir=$(grep "^${selected_idx}|" "$tmpfile" 2>/dev/null | head -1 | cut -d'|' -f2)
+        [ -n "$target_dir" ] && enter_workspace "$target_dir"
+    fi
+}
+
+# ========== 进入工作区 ==========
+enter_workspace() {
+    local dir="$1"
+    record_visit "$dir"
+    show_banner
+    show_role_welcome "$dir"
+    show_role_prompt "$dir"
+    role_interact "$dir"
+}
+
+# ========== 历史记录功能 ==========
+record_visit() {
+    local dir="$1"
+    local timestamp=$(date +%s)
+
+    mkdir -p "$(dirname "$MOZI_HISTORY_FILE")"
+
+    local history=()
+    if [ -f "$MOZI_HISTORY_FILE" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && history+=("$line")
+        done < "$MOZI_HISTORY_FILE"
+    fi
+
+    local new_history=()
+    for item in "${history[@]}"; do
+        local old_dir=$(echo "$item" | cut -d'|' -f2)
+        [ "$old_dir" != "$dir" ] && new_history+=("$item")
+    done
+
+    new_history=("$timestamp|$dir" "${new_history[@]}")
+    [ ${#new_history[@]} -gt 5 ] && new_history=("${new_history[@]:0:5}")
+
+    printf '%s\n' "${new_history[@]}" > "$MOZI_HISTORY_FILE"
+}
+
+get_last_visit_time() {
+    local dir="$1"
+    if [ -f "$MOZI_HISTORY_FILE" ]; then
+        local record=$(grep "|$dir$" "$MOZI_HISTORY_FILE" | head -1)
+        if [ -n "$record" ]; then
+            local ts=$(echo "$record" | cut -d'|' -f1)
+            local now=$(date +%s)
+            local diff=$((now - ts))
+
+            if [ $diff -lt 60 ]; then echo "刚刚"
+            elif [ $diff -lt 3600 ]; then echo "$((diff / 60)) 分钟前"
+            elif [ $diff -lt 86400 ]; then echo "$((diff / 3600)) 小时前"
+            else echo "$((diff / 86400)) 天前"
+            fi
+            return
+        fi
+    fi
+    echo ""
+}
+
+# ========== 欢迎信息 ==========
+show_role_welcome() {
+    local dir="$1"
+    local name=$(get_role_name "$dir")
+    local quote=$(get_role_quote "$dir")
+    local skills_count=$(count_skills "$dir")
+    local skills=$(list_skills "$dir" | head -3 | tr '\n' ', ')
+
+    echo ""
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │${RESET}  ${name} · 墨子守城"
+    echo -e "${WHITE}${BOLD}  ├────────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${WHITE}${BOLD}  │${RESET}  ${GRAY}${quote}${RESET}"
+    echo -e "${WHITE}${BOLD}  ├────────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${WHITE}${BOLD}  │${RESET}  工作区：${CYAN}$SCRIPT_DIR/$dir${RESET}"
+    echo -e "${WHITE}${BOLD}  │${RESET}  已安装技能：${GREEN}$skills_count 个${RESET}"
+    echo -e "${WHITE}${BOLD}  │${RESET}  技能列表：${GRAY}${skills}...${RESET}"
+
+    local last_visit=$(get_last_visit_time "$dir")
+    if [ -n "$last_visit" ]; then
+        echo -e "${WHITE}${BOLD}  │${RESET}  上次访问：${CYAN}$last_visit${RESET}"
+    fi
+
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+}
+
+show_role_prompt() {
+    local dir="$1"
+    echo -e "${YELLOW}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    case "$dir" in
+        js-security)
+            echo -e "${YELLOW}${BOLD}  │${RESET}  推荐使用 ${GREEN}/js-reverse-automation${RESET}"
+            echo -e "${YELLOW}${BOLD}  │${RESET}  ${GRAY}Target URL: https://目标站点/页面${RESET}"
+            ;;
+        penetration-testing)
+            echo -e "${YELLOW}${BOLD}  │${RESET}  使用 ${GREEN}/conducting-penetration-testing${RESET}"
+            echo -e "${YELLOW}${BOLD}  │${RESET}  ${GRAY}Target: target.com${RESET}"
+            ;;
+        *)
+            echo -e "${YELLOW}${BOLD}  │${RESET}  输入 / 查看可用 Skills"
+            ;;
+    esac
+    echo -e "${YELLOW}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+}
+
+# ========== 交互菜单 ==========
+role_interact() {
+    local dir="$1"
+    while true; do
+        echo ""
+        echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${WHITE}${BOLD}  │${RESET}  ${GREEN}[1]${RESET} 启动 claude    ${GREEN}[2]${RESET} claude --resume"
+        echo -e "${WHITE}${BOLD}  │${RESET}  ${GREEN}[3]${RESET} 手动命令      ${GREEN}[h]${RESET} 技能帮助      ${GREEN}[b]${RESET} 返回菜单    ${GREEN}[q]${RESET} 退出"
+        echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+        echo -ne "${CYAN}  操作 > ${RESET}"
+        read -r choice
+        case "$choice" in
+            1) echo -e "${CYAN}  启动 claude...${RESET}"; cd "$SCRIPT_DIR/$dir" && claude; break ;;
+            2) echo -e "${CYAN}  启动 claude --resume...${RESET}"; cd "$SCRIPT_DIR/$dir" && claude --resume; break ;;
+            3) echo -e "${CYAN}  手动模式${RESET}"; cd "$SCRIPT_DIR/$dir"; read -p "$ " cmd; [ -n "$cmd" ] && eval "$cmd" ;;
+            h|H)
+                echo -e "${WHITE}  可用 Skills:${RESET}"
+                echo -e "${GRAY}  ─────────────────────────────────────────────────────────────${RESET}"
+                list_skills "$dir" | while read skill; do
+                    echo -e "    ${GREEN}/$skill${RESET}"
+                done
+                ;;
+            b|B) break ;;
+            q|Q) echo -e "${GRAY}  退出 MoZiSec${RESET}"; exit 0 ;;
+            *) echo -e "${YELLOW}  无效命令${RESET}" ;;
+        esac
+    done
+}
+
+# ========== 帮助信息 ==========
+show_help() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  使用说明                                  │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+    echo -e "    ${GREEN}1.${RESET} ↑↓ 选择 | Enter 确认 | Esc 返回 | / 搜索"
+    echo -e "    ${GREEN}2.${RESET} 常用工作区：输入 0-4 快速选择"
+    echo -e "    ${GREEN}3.${RESET} 别名快捷：输入 jsc/p/a/w/rec 等"
+    echo ""
+    echo -e "${WHITE}${BOLD}  新功能 (v1.0):${RESET}"
+    echo -e "    ${GREEN}•${RESET} 自动发现：扫描含 CLAUDE.md 的目录"
+    echo -e "    ${GREEN}•${RESET} 自定义配置：~/.mozi_workspaces.json"
+    echo -e "    ${GREEN}•${RESET} 创建工作区：一键创建目录结构"
+    echo -e "    ${GREEN}•${RESET} Windows 支持：兼容 Git Bash/WSL"
+    echo ""
+    echo -e "${GRAY}  按回车继续...${RESET}"
+    read
+}
+
+# ========== 配置信息 ==========
+show_config() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  当前配置                                  │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+    echo -e "    脚本目录：${CYAN}$SCRIPT_DIR${RESET}"
+    echo -e "    工作区数量：${GREEN}${#DISCOVERED_WORKSPACES[@]}${RESET}"
+    echo -e "    配置文件：${CYAN}$MOZI_CONFIG_FILE${RESET}"
+
+    if [[ "$IS_WINDOWS" == true ]]; then
+        echo -e "    运行环境：${GREEN}Windows${RESET}"
+    else
+        echo -e "    运行环境：${GREEN}Linux/macOS${RESET}"
+    fi
+
+    echo ""
+    if [ -f "$MOZI_CONFIG_FILE" ]; then
+        echo -e "    自定义配置：${GREEN}已加载${RESET}"
+    else
+        echo -e "    自定义配置：${GRAY}未创建${RESET}"
+    fi
+    echo ""
+    echo -e "${GRAY}  按回车继续...${RESET}"
+    read
+}
+
+# ========== 创建工作区 ==========
+create_workspace_interactive() {
+    show_banner
+    echo -e "${WHITE}${BOLD}  ┌────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${WHITE}${BOLD}  │                  创建工作区                                │${RESET}"
+    echo -e "${WHITE}${BOLD}  └────────────────────────────────────────────────────────────┘${RESET}"
+    echo ""
+
+    echo -ne "  工作区名称 (英文，带连字符): "
+    read -r ws_name
+
+    if [ -z "$ws_name" ]; then
+        echo -e "${YELLOW}  名称不能为空${RESET}"
+        return
+    fi
+
+    if [ -d "$SCRIPT_DIR/$ws_name" ]; then
+        echo -e "${YELLOW}  目录已存在：$SCRIPT_DIR/$ws_name${RESET}"
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+        return
+    fi
+
+    echo -ne "  中文名称 (如：JS 安全分析): "
+    read -r ws_title
+
+    echo -ne "  别名 (如：jsc): "
+    read -r ws_alias
+
+    echo -ne "  分组： "
+    read -r ws_group
+    [ -z "$ws_group" ] && ws_group="专项领域"
+
+    echo -ne "  名言 (可选): "
+    read -r ws_quote
+    [ -z "$ws_quote" ] && ws_quote="守土有责，防患未然"
+
+    # 创建目录结构
+    mkdir -p "$SCRIPT_DIR/$ws_name/.claude/skills"
+    mkdir -p "$SCRIPT_DIR/$ws_name/tmp"
+
+    # 创建 CLAUDE.md
+    cat > "$SCRIPT_DIR/$ws_name/CLAUDE.md" << EOF
+# $ws_title
+
+## 启动方式
+
+\`\`\`bash
+cd $SCRIPT_DIR/$ws_name
+claude
+\`\`\`
+
+## 角色定义
+
+在此定义该工作区的角色定位和专业领域。
+
+## 技能目录
+
+技能位于 \`.claude/skills/\` 目录。
+
+## 文件创建规范
+
+临时文件必须写入 \`tmp/\` 目录。
+EOF
+
+    echo ""
+    echo -e "${GREEN}  ✓ 工作区创建成功：$ws_name${RESET}"
+    echo -e "${GRAY}  位置：$SCRIPT_DIR/$ws_name${RESET}"
+    echo ""
+    echo -e "${GRAY}  按回车返回...${RESET}"
+    read
+
+    discover_workspaces
+}
+
+# ========== 解析用户输入 ==========
+parse_role_input() {
+    local input="$1"
+    local lower_input="${1,,}"
+
+    if [[ "$lower_input" =~ ^[0-9]+$ ]]; then
+        for item in "${COMMON_WORKSPACES[@]}"; do
+            IFS='|' read -r idx dir alias name <<< "$item"
+            [ "$idx" == "$lower_input" ] && { echo "$dir"; return; }
+        done
+    fi
+
+    for dir in "${DISCOVERED_WORKSPACES[@]}"; do
+        local lower_dir="${dir,,}"
+        local lower_alias="${WORKSPACE_ALIASES[$dir],,}"
+        [ "$lower_input" == "$lower_dir" ] || [ "$lower_input" == "$lower_alias" ] && { echo "$dir"; return; }
+    done
+
+    for d in "$SCRIPT_DIR"/*/; do
+        local lower_d="${d,,}"
+        if [[ "$lower_d" == *"/${lower_input}/" ]]; then
+            echo "${d%/}"
+            return
+        fi
+    done
+
+    [ -d "$SCRIPT_DIR/$input" ] && { echo "$input"; return; }
+    return 1
+}
+
+# ========== 主入口 ==========
+mozi_cd() {
+    local input="$1"
+    [ -z "$input" ] && { mozi_interactive; return; }
+    local dir=$(parse_role_input "$input")
+    if [ -n "$dir" ] && [ -d "$SCRIPT_DIR/$dir" ]; then
+        enter_workspace "$dir"
+    else
+        echo -e "${YELLOW}未知的工作区：$input${RESET}"
+    fi
+}
+
+mozi_init() {
+    cat << 'INIT_EOF'
+export MOZI_PROJECT="MoZiSec"
+export MOZI_VERSION="v1.0"
+export MOZI_WORKSPACE_ROOT="$SCRIPT_DIR"
+
+mozi() { [ -z "$1" ] && mozi_cd || mozi_cd "$1"; }
+alias mozi-help='mozi h'
+alias mozi-config='mozi c'
+alias mozi-create='mozi create'
+INIT_EOF
+}
+
+mozi_interactive() {
+    discover_workspaces
+
+    if check_fzf; then
+        show_main_menu_fzf
+    else
+        show_banner
+        echo -e "${YELLOW}  未安装 fzf"
+        if [[ "$IS_WINDOWS" == true ]]; then
+            echo -e "${GRAY}  Windows: choco install fzf 或 winget install fzf${RESET}"
+        else
+            echo -e "${GRAY}  Linux: apt install fzf 或 brew install fzf${RESET}"
+        fi
+        echo -e "${GRAY}  按回车返回...${RESET}"
+        read
+    fi
+}
+
+# ========== 脚本入口 ==========
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    discover_workspaces
+
+    if [ "$1" = "init" ]; then
+        mozi_init
+    elif [ "$1" = "create" ] || [ "$1" = "new" ]; then
+        create_workspace_interactive
+    elif [ -z "$1" ]; then
+        mozi_interactive
+    else
+        mozi_cd "$1"
+    fi
+fi
