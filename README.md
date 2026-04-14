@@ -8,18 +8,9 @@
 
 ## 📹 演示视频
 
-> **视频文件**: [MoZi.mp4](./MoZi.mp4) (137 MB)
->
-> ⚠️ **注意**: GitHub 不支持直接播放视频文件。请下载后在本地观看。
->
-> **下载方式**:
-> ```bash
-> # 使用 Git LFS 下载
-> git lfs pull
->
-> # 或直接下载
-> wget https://github.com/Acczdy/MoZiSec/releases/download/v1.0/MoZi.mp4
-> ```
+![MoZiSec Demo](./MoZi.gif)
+
+> 💡 **提示**: 等待 GIF 加载，或 [下载 MoZi.mp4](./MoZi.mp4) 观看完整视频 (137 MB)
 
 > 墨家以 **兼爱、非攻** 为核心，构建了包含十大主张的严密思想体系，宗旨是 **兴天下之利，除天下之害**。
 >
