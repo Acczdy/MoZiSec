@@ -6,7 +6,37 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL--Kali-blueviolet)]()
 
-## 📹 演示
+## 🖥️ MoZiWeb 平台
+
+> 🚧 **当前状态**: MoZiWeb 平台正在测试中，欢迎体验和反馈
+
+MoZiWeb 是 MoZiSec 的 Web 可视化平台，提供系统概览、Agent 管理、工具管理、MCP 服务配置、多智能体协作等核心功能。
+
+### 系统概览
+
+![系统概览](./screenshots/01-system-overview.png)
+
+系统概览仪表盘展示 LLM 模型状态、可用工具数、MCP 服务、Agent 数量、用户活跃度、系统资源使用率、Token 预算等关键指标。
+
+### 工具管理
+
+![工具管理](./screenshots/02-tool-management.png)
+
+工具管理页面集中展示所有安全工具（如 amass、anew、arjun、arp-scan 等），支持启用/禁用、编辑配置和测试工具。
+
+### Fact-Intent 知识图谱
+
+![Fact-Intent 知识图谱](./screenshots/03-fact-intent-graph.png)
+
+Fact-Intent 知识图谱模块支持创建渗透测试项目，定义起点、目标和提示信息，以图结构管理和跟踪探索路径。
+
+### 多智能体协作
+
+![多智能体协作](./screenshots/04-multi-agent-collaboration.png)
+
+多智能体协作看板展示安全评估报告、测试任务状态、各 Agent 执行日志，支持任务分解和执行协作。
+
+## 📹 CLI 演示
 
 ![MoZiSec Demo](./MoZi.gif)
 
